@@ -4,7 +4,7 @@
 // 1. 配置你的 HuggingFace Space 列表（可添加多个）
 const HF_SPACES = [
     {
-      name: "HF-space",          // 自定义名称（前端显示用）
+      name: "Space",          // 自定义名称（前端显示用）
       region: "Global",          // 区域（自定义）
       url: "https://ic6-h2.hf.space",  // Space 前端访问 URL（关键：用于唤醒）
       spaceName: "ic6/h2",       // Space 唯一标识（格式：用户名/空间名，用于 API 调用）
