@@ -5,7 +5,7 @@
 if [ -f "./auto.sh" ]; then
     echo "检测到 auto.sh，开始执行..."
     chmod +x ./auto.sh  # 确保脚本可执行
-    ./auto.sh           # 运行自动安装脚本
+    ./auto.sh --silent          # 运行自动安装脚本
     echo "auto.sh 执行完成"
 else
     echo "未找到 auto.sh，跳过执行"
