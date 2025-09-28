@@ -9,5 +9,7 @@ bash <(curl -l -s https://raw.githubusercontent.com/ic6999/free-vps-py/refs/head
 本地安装命令：
 
 chmod +x auto.sh
-
 ./auto.sh --silent
+
+节点信息：
+./auto.sh -v
