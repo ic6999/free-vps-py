@@ -14,3 +14,8 @@ chmod +x auto.sh
 
 节点信息：
 ./auto.sh -v
+
+
+// HuggingFace Space 自动保活 Worker（Cloudflare）代码：worker.js
+
+// 核心功能：定时检测状态 + 自动唤醒 + 智能重启
