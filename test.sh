@@ -13,19 +13,27 @@ PROJECT_DIR_NAME="python-xray-argo"
 SILENT_MODE=false
 if [ "$1" = "--silent" ]; then
     SILENT_MODE=true
-    UUID="$2"
-    HF_TOKEN="$3"
-    HF_REPO_ID="$4"
+    
+    # 从Hugging Face secrets获取参数
+    UUID=${UUID:-$(generate_uuid)}  # 如果未设置则自动生成
+    HF_TOKEN=${HF_TOKEN}
+    HF_REPO_ID=${HF_REPO_ID}
     
     # 验证必填参数
-    if [ -z "$UUID" ] || [ -z "$HF_TOKEN" ] || [ -z "$HF_REPO_ID" ]; then
-        echo -e "${RED}静默模式需要提供所有参数: UUID, HF_TOKEN 和 HF_REPO_ID${NC}"
-        echo -e "${YELLOW}使用示例: ${NC}"
-        echo -e "${BLUE}./script.sh --silent <uuid> <hf_token> <hf_repo_id>${NC}"
+    if [ -z "$HF_TOKEN" ] || [ -z "$HF_REPO_ID" ]; then
+        echo -e "${RED}错误：静默模式需要设置HF_TOKEN和HF_REPO_ID环境变量${NC}"
+        echo -e "${YELLOW}请在Hugging Face的secrets中设置以下变量：${NC}"
+        echo -e "${BLUE}1. UUID (可选，未设置将自动生成)${NC}"
+        echo -e "${BLUE}2. HF_TOKEN (必须)${NC}"
+        echo -e "${BLUE}3. HF_REPO_ID (必须)${NC}"
         exit 1
     fi
     
     MODE_CHOICE="1"  # 静默模式默认使用极速模式
+    echo -e "${GREEN}静默模式已启用${NC}"
+    echo -e "${BLUE}从Hugging Face secrets获取配置：${NC}"
+    echo -e "UUID: ${YELLOW}$UUID${NC}"
+    echo -e "HF_REPO_ID: ${YELLOW}$HF_REPO_ID${NC}"
 fi
 
 # 如果是-v参数，直接查看节点信息
