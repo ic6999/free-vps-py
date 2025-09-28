@@ -16,6 +16,9 @@ chmod +x auto.sh
 ./auto.sh -v
 
 
-// HuggingFace Space 自动保活 Worker（Cloudflare）代码：worker.js
+🔵保活 Worker（Cloudflare）代码：worker.js
 
-// 核心功能：定时检测状态 + 自动唤醒 + 智能重启
+核心功能：定时检测状态 + 自动唤醒 + 智能重启。
+
+需添加环境变量HF_API_TOKEN（值=huggingface/HF_TOKEN)
+
