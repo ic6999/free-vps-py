@@ -22,3 +22,4 @@ chmod +x auto.sh
 
 需添加环境变量HF_API_TOKEN（值=huggingface/HF_TOKEN)
 
+智能重启需同步修改HF/files根目录的相关文件：dockerfile、start_server.sh
