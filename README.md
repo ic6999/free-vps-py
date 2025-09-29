@@ -1,12 +1,11 @@
 
-# 🔝参考来自：万物皆可搭节点
+## 🔝参考来自：万物皆可搭节点
 
-##🟢https://github.com/ic6999/one-node
+### 🟢https://github.com/ic6999/one-node
 
 
 
-###
-原安装命令：
+## 原安装命令：
 
 bash <(curl -l -s https://raw.githubusercontent.com/zzzhhh1/free-vps-py/refs/heads/main/test.sh)
 
