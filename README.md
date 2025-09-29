@@ -1,5 +1,4 @@
-[
-](https://github.com/ic6999/one-node)
+[万物皆可搭](https://github.com/ic6999/one-node)
 
 
 原安装命令：
