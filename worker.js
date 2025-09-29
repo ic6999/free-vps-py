@@ -1,4 +1,5 @@
 // HuggingFace Space 自动保活 Worker
+// 核心功能：显示Space自上次启动后的真实运行时间
 const HF_SPACES = [
   {
     name: "Space",
@@ -16,15 +17,15 @@ const CONFIG = {
   retryCount: 1
 };
 
-// 全局状态管理
+// 全局状态管理（重点追踪Space的实际启动时间）
 let spaceStateCache = {};
 HF_SPACES.forEach(space => {
-  const now = Date.now();
   spaceStateCache[space.spaceName] = {
     consecutiveSleepCount: 0,
     lastWakeUpTime: 0,
-    initialActiveTime: now,
-    lastActiveTime: now
+    // 关键字段：记录Space实际启动/唤醒的时间（而非Worker时间）
+    spaceStartTime: 0, 
+    lastKnownStatus: "unknown" // 记录上一次的状态，用于检测状态变化
   };
 });
 
@@ -36,7 +37,7 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 格式化时间差
+   * 格式化时间差（天/时/分/秒）
    */
   formatDuration(ms) {
     if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
@@ -56,24 +57,17 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 检测Space状态（修复响应时间计算）
+   * 检测Space状态（核心：追踪Space实际启动时间）
    */
   async checkSpaceStatus(space) {
-    let retry = CONFIG.retryCount;
     const cache = spaceStateCache[space.spaceName];
-    const checkStartTime = Date.now(); // 记录检测开始时间（关键修复）
-    
-    // 安全校验初始时间戳
-    if (Date.now() - cache.initialActiveTime > 365 * 24 * 60 * 60 * 1000) {
-      cache.initialActiveTime = Date.now();
-    }
+    const checkStartTime = Date.now();
+    let retry = CONFIG.retryCount;
     
     while (retry > 0) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
-
-        // 记录请求开始时间
         const requestStartTime = Date.now();
         
         const response = await fetch(`https://huggingface.co/api/spaces/${space.spaceName}`, {
@@ -84,60 +78,71 @@ class HuggingFaceKeeper {
             ...(this.hfApiToken ? { "Authorization": `Bearer ${this.hfApiToken}` } : {})
           }
         });
-
-        // 计算实际请求耗时（关键修复）
-        const requestDuration = Date.now() - requestStartTime;
         
+        const requestDuration = Date.now() - requestStartTime;
         clearTimeout(timeoutId);
         const spaceData = await response.json();
         const now = Date.now();
 
         let status, statusDesc, runningTime = "0秒";
         
+        // 关键逻辑：检测Space状态变化，确定启动时间
         switch (spaceData.runtime?.stage) {
           case "RUNNING":
             status = "active";
             statusDesc = "正常运行中";
-            cache.lastActiveTime = now;
-            runningTime = this.formatDuration(now - cache.initialActiveTime);
+            
+            // 状态从非运行变为运行 → 记录启动时间（Space实际启动时刻）
+            if (cache.lastKnownStatus !== "active") {
+              // 如果是首次检测或从睡眠/启动状态切换而来
+              cache.spaceStartTime = now; 
+              console.log(`[${space.spaceName}] 检测到启动，记录启动时间: ${new Date(cache.spaceStartTime).toLocaleString()}`);
+            }
+            
+            // 计算运行时间：当前时间 - Space实际启动时间
+            runningTime = this.formatDuration(now - cache.spaceStartTime);
             cache.consecutiveSleepCount = 0;
             break;
+            
           case "SLEEPING":
             status = "inactive";
             statusDesc = "已睡眠（需唤醒）";
             runningTime = "已睡眠";
             cache.consecutiveSleepCount += 1;
             break;
+            
           case "BUILDING":
           case "STARTING":
             status = "building";
             statusDesc = "构建/启动中";
             runningTime = "启动中";
             break;
+            
           default:
             status = "error";
             statusDesc = "异常状态";
             runningTime = "状态异常";
         }
+        
+        // 更新最后已知状态，用于下次状态变化检测
+        cache.lastKnownStatus = status;
 
         return {
           status,
           statusDesc,
           statusCode: response.status,
-          // 使用实际请求耗时作为响应时间（关键修复）
           responseTime: requestDuration,
           lastChecked: new Date(now).toISOString(),
           details: {
             sleepCount: cache.consecutiveSleepCount,
             runningTime: runningTime,
-            initialActiveTime: cache.initialActiveTime
+            spaceStartTime: cache.spaceStartTime // 传递Space启动时间给前端
           }
         };
 
       } catch (error) {
         retry--;
         if (retry === 0) {
-          // 错误情况下也计算响应时间
           const errorDuration = Date.now() - checkStartTime;
           return {
             status: "error",
@@ -147,7 +152,7 @@ class HuggingFaceKeeper {
             lastChecked: new Date().toISOString(),
             details: { 
               runningTime: "检测失败",
-              initialActiveTime: cache.initialActiveTime
+              spaceStartTime: cache.spaceStartTime
             }
           };
         }
@@ -157,7 +162,7 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 唤醒Space
+   * 唤醒Space（唤醒成功后更新启动时间）
    */
   async wakeUpSpace(space) {
     const cache = spaceStateCache[space.spaceName];
@@ -185,8 +190,8 @@ class HuggingFaceKeeper {
 
       clearTimeout(timeoutId);
       cache.lastWakeUpTime = now;
-      cache.initialActiveTime = now;
-      cache.lastActiveTime = now;
+      // 唤醒时记录启动时间（Space将在几秒后变为运行状态）
+      cache.spaceStartTime = now; 
       cache.consecutiveSleepCount = 0;
 
       return {
@@ -206,7 +211,7 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 重启Space
+   * 重启Space（重启成功后更新启动时间）
    */
   async restartSpace(space) {
     if (!this.hfApiToken) {
@@ -225,8 +230,7 @@ class HuggingFaceKeeper {
 
       if (response.ok) {
         const now = Date.now();
-        cache.initialActiveTime = now;
-        cache.lastActiveTime = now;
+        cache.spaceStartTime = now; // 重启后记录新的启动时间
       }
 
       return {
@@ -414,11 +418,11 @@ class HuggingFaceKeeper {
                 </div>
                 <div class="metric-item">
                     <div class="metric-value running-time" 
-                         data-initial-time="${space.details.initialActiveTime}"
+                         data-start-time="${space.details.spaceStartTime}"
                          data-status="${space.status}">
                         ${space.details.runningTime}
                     </div>
-                    <div class="metric-label">已运行时间</div>
+                    <div class="metric-label">Space运行时间</div>
                 </div>
                 <div class="metric-item">
                     <div class="metric-value">${space.details.sleepCount}</div>
@@ -458,13 +462,14 @@ class HuggingFaceKeeper {
             return parts.join("");
         }
 
-        // 实时更新运行时间
+        // 实时更新Space运行时间（基于Space实际启动时间）
         function startRealTimeUpdate() {
             setInterval(() => {
                 document.querySelectorAll('.running-time[data-status="active"]').forEach(el => {
-                    const initialTime = Number(el.dataset.initialTime);
+                    // 使用Space实际启动时间计算，而非Worker刷新时间
+                    const startTime = Number(el.dataset.startTime);
                     const now = Date.now();
-                    const durationMs = now - initialTime;
+                    const durationMs = now - startTime;
                     el.textContent = formatDuration(durationMs > 0 ? durationMs : 0);
                 });
             }, 1000);
