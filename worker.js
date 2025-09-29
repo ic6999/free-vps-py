@@ -1,33 +1,30 @@
-// HuggingFace Space 自动保活 Worker（Cloudflare）
-// 核心功能：定时检测状态 + 自动唤醒 + 智能重启 + 运行时间统计
-
-// 1. 配置你的 HuggingFace Space 列表（可添加多个）
+// HuggingFace Space 自动保活 Worker
 const HF_SPACES = [
   {
-    name: "Space",          // 自定义名称（前端显示用）
-    region: "Global",       // 区域（自定义）
-    url: "https://ic6-h2.hf.space",  // Space 前端访问 URL（关键：用于唤醒）
-    spaceName: "ic6/h2",    // Space 唯一标识（格式：用户名/空间名，用于 API 调用）
+    name: "Space",
+    region: "Global",
+    url: "https://ic6-h2.hf.space",
+    spaceName: "ic6/h2",
     description: "主要应用空间（免费 CPU 版）"
   }
 ];
 
-// 2. 保活配置（可根据需求调整）
 const CONFIG = {
-  checkInterval: 15 * 60 * 1000,  // 定时检测间隔（15分钟，免费版建议≥10分钟避免配额超限）
-  timeout: 30000,                 // 请求超时时间（30秒）
-  wakeUpThreshold: 1,             // 连续检测到睡眠 N 次后触发唤醒（建议 1-2）
-  retryCount: 1                   // 请求失败重试次数（1次足够）
+  checkInterval: 15 * 60 * 1000,
+  timeout: 30000,
+  wakeUpThreshold: 1,
+  retryCount: 1
 };
 
-// 3. 全局状态管理（新增 lastActiveTime 记录上次活跃时间）
+// 全局状态管理
 let spaceStateCache = {};
-// 初始化缓存（新增 lastActiveTime 字段）
 HF_SPACES.forEach(space => {
+  const now = Date.now();
   spaceStateCache[space.spaceName] = {
-    consecutiveSleepCount: 0,  // 连续睡眠次数
-    lastWakeUpTime: 0,         // 上次唤醒时间（毫秒时间戳）
-    lastActiveTime: Date.now() // 上次确认活跃时间（新增，用于计算运行时长）
+    consecutiveSleepCount: 0,
+    lastWakeUpTime: 0,
+    initialActiveTime: now,
+    lastActiveTime: now
   };
 });
 
@@ -35,17 +32,15 @@ class HuggingFaceKeeper {
   constructor() {
     this.lastUpdate = new Date();
     this.appStatus = {};
-    // 从 Worker 环境变量获取 API Token（需在 Cloudflare 控制台配置）
     this.hfApiToken = typeof HF_API_TOKEN !== "undefined" ? HF_API_TOKEN : "";
   }
 
   /**
-   * 工具方法：格式化时间差（毫秒 → 天/时/分/秒）
-   * @param {number} ms - 时间差（毫秒）
-   * @returns {string} 格式化后的时间字符串（如：1天2时3分4秒）
+   * 格式化时间差
    */
   formatDuration(ms) {
-    if (ms < 0) return "计算异常";
+    if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
+    
     const second = Math.floor(ms / 1000) % 60;
     const minute = Math.floor(ms / (1000 * 60)) % 60;
     const hour = Math.floor(ms / (1000 * 60 * 60)) % 24;
@@ -61,188 +56,191 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 核心1：检测 Space 真实状态（新增运行时间计算逻辑）
-   * @param {Object} space - Space 配置项
-   * @returns {Object} 状态详情（含已运行时间）
+   * 检测Space状态（修复响应时间计算）
    */
   async checkSpaceStatus(space) {
     let retry = CONFIG.retryCount;
+    const cache = spaceStateCache[space.spaceName];
+    const checkStartTime = Date.now(); // 记录检测开始时间（关键修复）
+    
+    // 安全校验初始时间戳
+    if (Date.now() - cache.initialActiveTime > 365 * 24 * 60 * 60 * 1000) {
+      cache.initialActiveTime = Date.now();
+    }
+    
     while (retry > 0) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
 
-        // 调用 HuggingFace Space 状态 API（官方文档：https://huggingface.co/docs/hub/api#spaces）
+        // 记录请求开始时间
+        const requestStartTime = Date.now();
+        
         const response = await fetch(`https://huggingface.co/api/spaces/${space.spaceName}`, {
           method: "GET",
           signal: controller.signal,
           headers: {
-            "User-Agent": "HF-Keeper/1.0 (Cloudflare Worker)",
+            "User-Agent": "HF-Keeper/1.0",
             ...(this.hfApiToken ? { "Authorization": `Bearer ${this.hfApiToken}` } : {})
           }
         });
 
+        // 计算实际请求耗时（关键修复）
+        const requestDuration = Date.now() - requestStartTime;
+        
         clearTimeout(timeoutId);
         const spaceData = await response.json();
+        const now = Date.now();
 
-        // 根据 API 返回的 runtime.stage 判断状态
-        let status, statusDesc, runningTime = "0秒"; // 初始化运行时间
+        let status, statusDesc, runningTime = "0秒";
+        
         switch (spaceData.runtime?.stage) {
           case "RUNNING":
             status = "active";
             statusDesc = "正常运行中";
-            // 更新上次活跃时间（每次确认运行时刷新）
-            spaceStateCache[space.spaceName].lastActiveTime = Date.now();
-            // 计算已运行时间（当前时间 - 上次活跃时间）
-            runningTime = this.formatDuration(
-              Date.now() - spaceStateCache[space.spaceName].lastActiveTime
-            );
-            spaceStateCache[space.spaceName].consecutiveSleepCount = 0; // 重置睡眠计数
+            cache.lastActiveTime = now;
+            runningTime = this.formatDuration(now - cache.initialActiveTime);
+            cache.consecutiveSleepCount = 0;
             break;
           case "SLEEPING":
             status = "inactive";
             statusDesc = "已睡眠（需唤醒）";
-            runningTime = "已睡眠"; // 睡眠状态时显示提示
-            spaceStateCache[space.spaceName].consecutiveSleepCount += 1; // 累加睡眠计数
+            runningTime = "已睡眠";
+            cache.consecutiveSleepCount += 1;
             break;
           case "BUILDING":
           case "STARTING":
             status = "building";
             statusDesc = "构建/启动中";
-            runningTime = "启动中"; // 启动状态时显示提示
+            runningTime = "启动中";
             break;
           default:
             status = "error";
-            statusDesc = `异常状态: ${spaceData.runtime?.stage || "未知"}`;
-            runningTime = "状态异常"; // 异常状态时显示提示
+            statusDesc = "异常状态";
+            runningTime = "状态异常";
         }
 
         return {
           status,
           statusDesc,
           statusCode: response.status,
-          responseTime: Date.now() - this.lastUpdate.getTime(),
-          lastChecked: new Date().toISOString(),
+          // 使用实际请求耗时作为响应时间（关键修复）
+          responseTime: requestDuration,
+          lastChecked: new Date(now).toISOString(),
           details: {
-            runtime: spaceData.runtime?.stage || "未知",
-            hardware: spaceData.runtime?.hardware || "未知", // 保留硬件数据（暂不显示）
-            storage: spaceData.runtime?.storage || "未知",
-            sleepCount: spaceStateCache[space.spaceName].consecutiveSleepCount,
-            runningTime: runningTime // 新增：已运行时间（前端显示用）
+            sleepCount: cache.consecutiveSleepCount,
+            runningTime: runningTime,
+            initialActiveTime: cache.initialActiveTime
           }
         };
 
       } catch (error) {
         retry--;
         if (retry === 0) {
-          console.error(`[${space.spaceName}] 状态检测失败:`, error.message);
+          // 错误情况下也计算响应时间
+          const errorDuration = Date.now() - checkStartTime;
           return {
             status: "error",
             statusDesc: "检测请求失败",
             statusCode: 500,
-            responseTime: 0,
+            responseTime: errorDuration,
             lastChecked: new Date().toISOString(),
             details: { 
-              error: error.message,
-              runningTime: "检测失败" // 检测失败时显示提示
+              runningTime: "检测失败",
+              initialActiveTime: cache.initialActiveTime
             }
           };
         }
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 重试间隔1秒
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
   }
 
   /**
-   * 核心2：唤醒睡眠的 Space（主动访问前端 URL，免费版关键保活手段）
-   * @param {Object} space - Space 配置项
-   * @returns {Object} 唤醒结果
+   * 唤醒Space
    */
   async wakeUpSpace(space) {
+    const cache = spaceStateCache[space.spaceName];
     try {
-      // 避免短时间内重复唤醒（10分钟内只唤醒1次）
       const now = Date.now();
-      if (now - spaceStateCache[space.spaceName].lastWakeUpTime < 10 * 60 * 1000) {
+      
+      if (now - cache.lastWakeUpTime < 10 * 60 * 1000) {
         return {
           success: false,
-          message: "10分钟内已唤醒过，跳过重复操作",
-          timestamp: new Date().toISOString()
+          message: "10分钟内已唤醒过",
+          timestamp: new Date(now).toISOString()
         };
       }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), CONFIG.timeout);
 
-      // 访问 Space 前端 URL 唤醒（无需 API Token，模拟用户访问）
       const response = await fetch(space.url, {
         method: "GET",
         signal: controller.signal,
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
       });
 
       clearTimeout(timeoutId);
-      spaceStateCache[space.spaceName].lastWakeUpTime = now; // 更新唤醒时间
-      spaceStateCache[space.spaceName].lastActiveTime = now; // 唤醒时同步更新活跃时间
-      spaceStateCache[space.spaceName].consecutiveSleepCount = 0; // 重置睡眠计数
+      cache.lastWakeUpTime = now;
+      cache.initialActiveTime = now;
+      cache.lastActiveTime = now;
+      cache.consecutiveSleepCount = 0;
 
       return {
         success: response.ok,
-        message: response.ok ? "唤醒请求已发送（Space 正在启动）" : `唤醒失败（HTTP ${response.status}）`,
+        message: response.ok ? "唤醒请求已发送" : `唤醒失败（${response.status}）`,
         statusCode: response.status,
-        timestamp: new Date().toISOString()
+        timestamp: new Date(now).toISOString()
       };
 
     } catch (error) {
-      console.error(`[${space.spaceName}] 唤醒失败:`, error.message);
       return {
         success: false,
-        message: `唤醒请求异常: ${error.message}`,
+        message: `唤醒异常: ${error.message}`,
         timestamp: new Date().toISOString()
       };
     }
   }
 
   /**
-   * 核心3：重启 Space（唤醒无效时备用，需 API Token）
-   * @param {Object} space - Space 配置项
-   * @returns {Object} 重启结果
+   * 重启Space
    */
   async restartSpace(space) {
     if (!this.hfApiToken) {
-      return { success: false, message: "未配置 HF_API_TOKEN，无法调用重启 API" };
+      return { success: false, message: "未配置HF_API_TOKEN" };
     }
 
+    const cache = spaceStateCache[space.spaceName];
     try {
       const response = await fetch(`https://huggingface.co/api/spaces/${space.spaceName}/restart`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${this.hfApiToken}`,
-          "Content-Type": "application/json",
-          "User-Agent": "HF-Keeper/1.0 (Cloudflare Worker)"
+          "Content-Type": "application/json"
         }
       });
 
-      // 重启时重置活跃时间
       if (response.ok) {
-        spaceStateCache[space.spaceName].lastActiveTime = Date.now();
+        const now = Date.now();
+        cache.initialActiveTime = now;
+        cache.lastActiveTime = now;
       }
 
       return {
         success: response.ok,
-        message: response.ok ? "重启请求已发送（约10-30秒生效）" : `重启失败（HTTP ${response.status}）`,
+        message: response.ok ? "重启请求已发送" : `重启失败（${response.status}）`,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error(`[${space.spaceName}] 重启失败:`, error.message);
       return { success: false, message: `重启异常: ${error.message}` };
     }
   }
 
   /**
-   * 获取所有 Space 状态（供前端显示和定时任务使用）
+   * 获取所有状态
    */
   async getAllStatus() {
     const results = await Promise.all(HF_SPACES.map(space => this.checkSpaceStatus(space)));
@@ -254,20 +252,19 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 生成前端监控页面（核心变更：替换“硬件配置”为“已运行时间”）
+   * 生成前端页面
    */
   generateHTML(statusData) {
     const lastUpdate = this.lastUpdate.toLocaleString("zh-CN");
     const spaceList = Object.values(statusData);
 
-    // 状态颜色映射
     const getStatusColor = (status) => {
       switch (status) {
-        case "active": return "#48c78e"; // 成功绿
-        case "inactive": return "#f14668"; // 危险红
-        case "building": return "#ffe08a"; // 警告黄
-        case "error": return "#f14668"; // 错误红
-        default: return "#363636"; // 默认黑
+        case "active": return "#48c78e";
+        case "inactive": return "#f14668";
+        case "building": return "#ffe08a";
+        case "error": return "#f14668";
+        default: return "#363636";
       }
     };
 
@@ -277,7 +274,7 @@ class HuggingFaceKeeper {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HF-Keeper - HuggingFace 自动保活</title>
+    <title>HF-Keeper 自动保活</title>
     <style>
         :root {
             --primary: #ff6b35;
@@ -362,7 +359,7 @@ class HuggingFaceKeeper {
             margin-bottom: 5px;
         }
         .metric-label { font-size: 0.85em; opacity: 0.8; }
-        .action-buttons { display: flex; gap: 12px; }
+        .action-buttons { display: flex; gap: 12px; flex-wrap: wrap; }
         .btn {
             padding: 10px 20px;
             border: none;
@@ -386,7 +383,6 @@ class HuggingFaceKeeper {
         }
         @media (max-width: 768px) {
             .metrics { grid-template-columns: 1fr 1fr; }
-            .action-buttons { flex-wrap: wrap; }
         }
     </style>
 </head>
@@ -416,9 +412,12 @@ class HuggingFaceKeeper {
                     <div class="metric-value">${space.statusCode}</div>
                     <div class="metric-label">状态码</div>
                 </div>
-                <!-- 核心变更：替换“硬件配置”为“已运行时间” -->
                 <div class="metric-item">
-                    <div class="metric-value">${space.details.runningTime}</div>
+                    <div class="metric-value running-time" 
+                         data-initial-time="${space.details.initialActiveTime}"
+                         data-status="${space.status}">
+                        ${space.details.runningTime}
+                    </div>
                     <div class="metric-label">已运行时间</div>
                 </div>
                 <div class="metric-item">
@@ -436,15 +435,47 @@ class HuggingFaceKeeper {
         `).join("")}
 
         <div class="footer">
-            <p>HF-Keeper v1.0 | 定时保活间隔: ${CONFIG.checkInterval / 60000}分钟 | 配置 ${HF_SPACES.length} 个 Space</p>
+            <p>HF-Keeper | 保活间隔: ${CONFIG.checkInterval / 60000}分钟 | 管理 ${HF_SPACES.length} 个 Space</p>
         </div>
     </div>
 
     <script>
-        // 前端状态刷新
+        // 格式化时间差
+        function formatDuration(ms) {
+            if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
+            
+            const second = Math.floor(ms / 1000) % 60;
+            const minute = Math.floor(ms / (1000 * 60)) % 60;
+            const hour = Math.floor(ms / (1000 * 60 * 60)) % 24;
+            const day = Math.floor(ms / (1000 * 60 * 60 * 24));
+            
+            const parts = [];
+            if (day > 0) parts.push(\`\${day}天\`);
+            if (hour > 0 || parts.length > 0) parts.push(\`\${hour}时\`);
+            if (minute > 0 || parts.length > 0) parts.push(\`\${minute}分\`);
+            parts.push(\`\${second}秒\`);
+            
+            return parts.join("");
+        }
+
+        // 实时更新运行时间
+        function startRealTimeUpdate() {
+            setInterval(() => {
+                document.querySelectorAll('.running-time[data-status="active"]').forEach(el => {
+                    const initialTime = Number(el.dataset.initialTime);
+                    const now = Date.now();
+                    const durationMs = now - initialTime;
+                    el.textContent = formatDuration(durationMs > 0 ? durationMs : 0);
+                });
+            }, 1000);
+        }
+
+        window.onload = startRealTimeUpdate;
+
+        // 刷新状态
         function refreshStatus() { window.location.reload(); }
 
-        // 前端手动唤醒
+        // 手动唤醒
         async function wakeUpSpace(spaceName) {
             try {
                 const res = await fetch(\`/wake?space=\${spaceName}\`);
@@ -454,7 +485,7 @@ class HuggingFaceKeeper {
             } catch (e) { alert(\`操作失败: \${e.message}\`); }
         }
 
-        // 前端手动重启
+        // 手动重启
         async function restartSpace(spaceName) {
             if (!confirm("确定重启？服务会中断10-30秒")) return;
             try {
@@ -465,7 +496,7 @@ class HuggingFaceKeeper {
             } catch (e) { alert(\`操作失败: \${e.message}\`); }
         }
 
-        // 前端自动刷新（5分钟一次）
+        // 定时全局刷新
         setInterval(refreshStatus, 5 * 60 * 1000);
     </script>
 </body>
@@ -474,7 +505,7 @@ class HuggingFaceKeeper {
 }
 
 /**
- * HTTP 请求处理（前端页面、唤醒/重启接口、状态接口）
+ * 请求处理
  */
 async function handleRequest(request) {
   const keeper = new HuggingFaceKeeper();
@@ -482,71 +513,56 @@ async function handleRequest(request) {
   const spaceName = url.searchParams.get("space");
   const targetSpace = HF_SPACES.find(s => s.spaceName === spaceName) || HF_SPACES[0];
 
-  // 1. 唤醒接口（/wake?space=用户名/空间名）
   if (url.pathname === "/wake") {
-    if (!targetSpace) return new Response(JSON.stringify({ success: false, message: "Space 不存在" }), { headers: { "Content-Type": "application/json" } });
+    if (!targetSpace) return new Response(JSON.stringify({ success: false, message: "Space不存在" }), { headers: { "Content-Type": "application/json" } });
     const result = await keeper.wakeUpSpace(targetSpace);
     return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
   }
 
-  // 2. 重启接口（/restart?space=用户名/空间名）
   if (url.pathname === "/restart") {
-    if (!targetSpace) return new Response(JSON.stringify({ success: false, message: "Space 不存在" }), { headers: { "Content-Type": "application/json" } });
+    if (!targetSpace) return new Response(JSON.stringify({ success: false, message: "Space不存在" }), { headers: { "Content-Type": "application/json" } });
     const result = await keeper.restartSpace(targetSpace);
     return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
   }
 
-  // 3. 状态接口（/status，返回 JSON）
   if (url.pathname === "/status") {
     const status = await keeper.getAllStatus();
     return new Response(JSON.stringify(status, null, 2), { headers: { "Content-Type": "application/json" } });
   }
 
-  // 4. 默认返回前端监控页面
   const status = await keeper.getAllStatus();
   const html = keeper.generateHTML(status);
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
 /**
- * 定时保活任务（Cloudflare Scheduled Trigger 触发）
- * 核心：检测所有 Space，连续睡眠达到阈值则自动唤醒
+ * 定时任务
  */
 async function handleScheduledEvent() {
   console.log(`[定时保活] 开始执行（${new Date().toLocaleString()}）`);
   const keeper = new HuggingFaceKeeper();
 
   try {
-    // 1. 获取所有 Space 状态
     const statusData = await keeper.getAllStatus();
     const spaceList = Object.values(statusData);
 
-    // 2. 遍历检测，符合条件则自动唤醒
     for (const space of spaceList) {
-      console.log(`[${space.spaceName}] 状态: ${space.status}（连续睡眠: ${space.details.sleepCount}次 | 已运行: ${space.details.runningTime}）`);
-      
-      // 连续睡眠达到阈值 → 触发自动唤醒
       if (space.status === "inactive" && space.details.sleepCount >= CONFIG.wakeUpThreshold) {
         console.log(`[${space.spaceName}] 触发自动唤醒`);
         const wakeResult = await keeper.wakeUpSpace(space);
-        console.log(`[${space.spaceName}] 唤醒结果: ${wakeResult.success ? "成功" : "失败"} - ${wakeResult.message}`);
         
-        // 唤醒失败 → 尝试重启（备选方案）
         if (!wakeResult.success && keeper.hfApiToken) {
-          console.log(`[${space.spaceName}] 唤醒失败，尝试重启`);
-          const restartResult = await keeper.restartSpace(space);
-          console.log(`[${space.spaceName}] 重启结果: ${restartResult.success ? "成功" : "失败"} - ${restartResult.message}`);
+          console.log(`[${space.spaceName}] 尝试重启`);
+          await keeper.restartSpace(space);
         }
       }
     }
-
-    console.log(`[定时保活] 执行完成（共处理 ${spaceList.length} 个 Space）`);
   } catch (error) {
-    console.error(`[定时保活] 执行异常:`, error.message);
+    console.error(`[定时保活] 异常:`, error.message);
   }
 }
 
-// 注册 Cloudflare Worker 事件
+// 注册事件
 addEventListener("fetch", event => {
   event.respondWith(handleRequest(event.request));
 });
