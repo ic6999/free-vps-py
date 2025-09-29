@@ -4,6 +4,8 @@ https://github.com/ic6999/one-node
 
 
 
+
+
 原安装命令：
 
 bash <(curl -l -s https://raw.githubusercontent.com/zzzhhh1/free-vps-py/refs/heads/main/test.sh)
