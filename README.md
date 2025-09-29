@@ -1,4 +1,6 @@
-[万物皆可搭](https://github.com/ic6999/one-node)
+
+One Node 万物皆可搭节点 | Everything can be a proxy node.
+https://github.com/ic6999/one-node
 
 
 原安装命令：
