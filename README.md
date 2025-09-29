@@ -1,6 +1,7 @@
 
-One Node 万物皆可搭节点 | Everything can be a proxy node.
+🔝皆可搭节点🟢
 https://github.com/ic6999/one-node
+
 
 
 原安装命令：
