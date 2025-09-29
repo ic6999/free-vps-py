@@ -1,5 +1,5 @@
 // HuggingFace Space 自动保活 Worker
-// 核心功能：显示Space自上次启动后的真实运行时间
+// 核心改进：使用Cloudflare KV持久化存储Space启动时间
 const HF_SPACES = [
   {
     name: "Space",
@@ -14,30 +14,69 @@ const CONFIG = {
   checkInterval: 15 * 60 * 1000,
   timeout: 30000,
   wakeUpThreshold: 1,
-  retryCount: 1
+  retryCount: 1,
+  // KV存储键名前缀（需在Cloudflare控制台绑定KV命名空间为SPACE_KV）
+  kvPrefix: "space_"
 };
-
-// 全局状态管理（重点追踪Space的实际启动时间）
-let spaceStateCache = {};
-HF_SPACES.forEach(space => {
-  spaceStateCache[space.spaceName] = {
-    consecutiveSleepCount: 0,
-    lastWakeUpTime: 0,
-    // 关键字段：记录Space实际启动/唤醒的时间（而非Worker时间）
-    spaceStartTime: 0, 
-    lastKnownStatus: "unknown" // 记录上一次的状态，用于检测状态变化
-  };
-});
 
 class HuggingFaceKeeper {
   constructor() {
     this.lastUpdate = new Date();
     this.appStatus = {};
     this.hfApiToken = typeof HF_API_TOKEN !== "undefined" ? HF_API_TOKEN : "";
+    // 检查KV存储是否绑定
+    this.hasKV = typeof SPACE_KV !== "undefined";
+    if (!this.hasKV) {
+      console.warn("未绑定SPACE_KV命名空间，运行时间将无法持久化");
+    }
   }
 
   /**
-   * 格式化时间差（天/时/分/秒）
+   * 从KV存储获取Space状态数据
+   */
+  async getSpaceState(spaceName) {
+    if (!this.hasKV) return this.getDefaultState();
+    
+    try {
+      const data = await SPACE_KV.get(CONFIG.kvPrefix + spaceName);
+      return data ? JSON.parse(data) : this.getDefaultState();
+    } catch (error) {
+      console.error(`获取KV数据失败: ${error.message}`);
+      return this.getDefaultState();
+    }
+  }
+
+  /**
+   * 保存Space状态数据到KV存储
+   */
+  async saveSpaceState(spaceName, state) {
+    if (!this.hasKV) return;
+    
+    try {
+      await SPACE_KV.put(
+        CONFIG.kvPrefix + spaceName,
+        JSON.stringify(state),
+        { expirationTtl: 30 * 24 * 60 * 60 } // 30天过期
+      );
+    } catch (error) {
+      console.error(`保存KV数据失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 默认状态数据
+   */
+  getDefaultState() {
+    return {
+      consecutiveSleepCount: 0,
+      lastWakeUpTime: 0,
+      spaceStartTime: 0, // 持久化的Space启动时间
+      lastKnownStatus: "unknown"
+    };
+  }
+
+  /**
+   * 格式化时间差
    */
   formatDuration(ms) {
     if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
@@ -57,10 +96,11 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 检测Space状态（核心：追踪Space实际启动时间）
+   * 检测Space状态（基于KV持久化）
    */
   async checkSpaceStatus(space) {
-    const cache = spaceStateCache[space.spaceName];
+    // 从KV获取持久化状态
+    const state = await this.getSpaceState(space.spaceName);
     const checkStartTime = Date.now();
     let retry = CONFIG.retryCount;
     
@@ -86,29 +126,29 @@ class HuggingFaceKeeper {
 
         let status, statusDesc, runningTime = "0秒";
         
-        // 关键逻辑：检测Space状态变化，确定启动时间
+        // 状态变化检测与启动时间更新
         switch (spaceData.runtime?.stage) {
           case "RUNNING":
             status = "active";
             statusDesc = "正常运行中";
             
-            // 状态从非运行变为运行 → 记录启动时间（Space实际启动时刻）
-            if (cache.lastKnownStatus !== "active") {
-              // 如果是首次检测或从睡眠/启动状态切换而来
-              cache.spaceStartTime = now; 
-              console.log(`[${space.spaceName}] 检测到启动，记录启动时间: ${new Date(cache.spaceStartTime).toLocaleString()}`);
+            // 状态从非运行变为运行 → 更新启动时间
+            if (state.lastKnownStatus !== "active") {
+              // 如果是首次运行或从睡眠中唤醒
+              state.spaceStartTime = now;
+              console.log(`[${space.spaceName}] 记录启动时间: ${new Date(state.spaceStartTime).toLocaleString()}`);
             }
             
-            // 计算运行时间：当前时间 - Space实际启动时间
-            runningTime = this.formatDuration(now - cache.spaceStartTime);
-            cache.consecutiveSleepCount = 0;
+            // 计算运行时间（当前时间 - 持久化的启动时间）
+            runningTime = this.formatDuration(now - state.spaceStartTime);
+            state.consecutiveSleepCount = 0;
             break;
             
           case "SLEEPING":
             status = "inactive";
             statusDesc = "已睡眠（需唤醒）";
             runningTime = "已睡眠";
-            cache.consecutiveSleepCount += 1;
+            state.consecutiveSleepCount += 1;
             break;
             
           case "BUILDING":
@@ -124,8 +164,10 @@ class HuggingFaceKeeper {
             runningTime = "状态异常";
         }
         
-        // 更新最后已知状态，用于下次状态变化检测
-        cache.lastKnownStatus = status;
+        // 更新最后已知状态
+        state.lastKnownStatus = status;
+        // 保存状态到KV（持久化）
+        await this.saveSpaceState(space.spaceName, state);
 
         return {
           status,
@@ -134,9 +176,9 @@ class HuggingFaceKeeper {
           responseTime: requestDuration,
           lastChecked: new Date(now).toISOString(),
           details: {
-            sleepCount: cache.consecutiveSleepCount,
+            sleepCount: state.consecutiveSleepCount,
             runningTime: runningTime,
-            spaceStartTime: cache.spaceStartTime // 传递Space启动时间给前端
+            spaceStartTime: state.spaceStartTime
           }
         };
 
@@ -144,6 +186,8 @@ class HuggingFaceKeeper {
         retry--;
         if (retry === 0) {
           const errorDuration = Date.now() - checkStartTime;
+          // 出错时也保存状态
+          await this.saveSpaceState(space.spaceName, state);
           return {
             status: "error",
             statusDesc: "检测请求失败",
@@ -152,7 +196,7 @@ class HuggingFaceKeeper {
             lastChecked: new Date().toISOString(),
             details: { 
               runningTime: "检测失败",
-              spaceStartTime: cache.spaceStartTime
+              spaceStartTime: state.spaceStartTime
             }
           };
         }
@@ -162,14 +206,14 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 唤醒Space（唤醒成功后更新启动时间）
+   * 唤醒Space
    */
   async wakeUpSpace(space) {
-    const cache = spaceStateCache[space.spaceName];
+    const state = await this.getSpaceState(space.spaceName);
     try {
       const now = Date.now();
       
-      if (now - cache.lastWakeUpTime < 10 * 60 * 1000) {
+      if (now - state.lastWakeUpTime < 10 * 60 * 1000) {
         return {
           success: false,
           message: "10分钟内已唤醒过",
@@ -189,10 +233,10 @@ class HuggingFaceKeeper {
       });
 
       clearTimeout(timeoutId);
-      cache.lastWakeUpTime = now;
-      // 唤醒时记录启动时间（Space将在几秒后变为运行状态）
-      cache.spaceStartTime = now; 
-      cache.consecutiveSleepCount = 0;
+      state.lastWakeUpTime = now;
+      state.spaceStartTime = now; // 唤醒时更新启动时间
+      state.consecutiveSleepCount = 0;
+      await this.saveSpaceState(space.spaceName, state);
 
       return {
         success: response.ok,
@@ -202,6 +246,7 @@ class HuggingFaceKeeper {
       };
 
     } catch (error) {
+      await this.saveSpaceState(space.spaceName, state);
       return {
         success: false,
         message: `唤醒异常: ${error.message}`,
@@ -211,14 +256,14 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 重启Space（重启成功后更新启动时间）
+   * 重启Space
    */
   async restartSpace(space) {
     if (!this.hfApiToken) {
       return { success: false, message: "未配置HF_API_TOKEN" };
     }
 
-    const cache = spaceStateCache[space.spaceName];
+    const state = await this.getSpaceState(space.spaceName);
     try {
       const response = await fetch(`https://huggingface.co/api/spaces/${space.spaceName}/restart`, {
         method: "POST",
@@ -230,15 +275,17 @@ class HuggingFaceKeeper {
 
       if (response.ok) {
         const now = Date.now();
-        cache.spaceStartTime = now; // 重启后记录新的启动时间
+        state.spaceStartTime = now; // 重启后更新启动时间
       }
 
+      await this.saveSpaceState(space.spaceName, state);
       return {
         success: response.ok,
         message: response.ok ? "重启请求已发送" : `重启失败（${response.status}）`,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
+      await this.saveSpaceState(space.spaceName, state);
       return { success: false, message: `重启异常: ${error.message}` };
     }
   }
@@ -261,6 +308,7 @@ class HuggingFaceKeeper {
   generateHTML(statusData) {
     const lastUpdate = this.lastUpdate.toLocaleString("zh-CN");
     const spaceList = Object.values(statusData);
+    const hasKV = this.hasKV ? "已启用" : "未启用（运行时间无法持久化）";
 
     const getStatusColor = (status) => {
       switch (status) {
@@ -394,7 +442,7 @@ class HuggingFaceKeeper {
     <div class="container">
         <div class="header">
             <h1>HF-Keeper 自动保活监控</h1>
-            <div class="update-time">最后更新: ${lastUpdate}</div>
+            <div class="update-time">最后更新: ${lastUpdate} | 持久化: ${hasKV}</div>
         </div>
 
         ${spaceList.map(space => `
@@ -462,11 +510,10 @@ class HuggingFaceKeeper {
             return parts.join("");
         }
 
-        // 实时更新Space运行时间（基于Space实际启动时间）
+        // 实时更新运行时间
         function startRealTimeUpdate() {
             setInterval(() => {
                 document.querySelectorAll('.running-time[data-status="active"]').forEach(el => {
-                    // 使用Space实际启动时间计算，而非Worker刷新时间
                     const startTime = Number(el.dataset.startTime);
                     const now = Date.now();
                     const durationMs = now - startTime;
