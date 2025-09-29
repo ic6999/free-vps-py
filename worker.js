@@ -1,5 +1,5 @@
 // HuggingFace Space 自动保活 Worker
-// 核心改进：使用Cloudflare KV持久化存储Space启动时间
+// 新增功能：在界面显示Space的访问URL
 const HF_SPACES = [
   {
     name: "Space",
@@ -15,7 +15,6 @@ const CONFIG = {
   timeout: 30000,
   wakeUpThreshold: 1,
   retryCount: 1,
-  // KV存储键名前缀（需在Cloudflare控制台绑定KV命名空间为SPACE_KV）
   kvPrefix: "space_"
 };
 
@@ -24,16 +23,12 @@ class HuggingFaceKeeper {
     this.lastUpdate = new Date();
     this.appStatus = {};
     this.hfApiToken = typeof HF_API_TOKEN !== "undefined" ? HF_API_TOKEN : "";
-    // 检查KV存储是否绑定
     this.hasKV = typeof SPACE_KV !== "undefined";
     if (!this.hasKV) {
       console.warn("未绑定SPACE_KV命名空间，运行时间将无法持久化");
     }
   }
 
-  /**
-   * 从KV存储获取Space状态数据
-   */
   async getSpaceState(spaceName) {
     if (!this.hasKV) return this.getDefaultState();
     
@@ -46,9 +41,6 @@ class HuggingFaceKeeper {
     }
   }
 
-  /**
-   * 保存Space状态数据到KV存储
-   */
   async saveSpaceState(spaceName, state) {
     if (!this.hasKV) return;
     
@@ -56,28 +48,22 @@ class HuggingFaceKeeper {
       await SPACE_KV.put(
         CONFIG.kvPrefix + spaceName,
         JSON.stringify(state),
-        { expirationTtl: 30 * 24 * 60 * 60 } // 30天过期
+        { expirationTtl: 30 * 24 * 60 * 60 }
       );
     } catch (error) {
       console.error(`保存KV数据失败: ${error.message}`);
     }
   }
 
-  /**
-   * 默认状态数据
-   */
   getDefaultState() {
     return {
       consecutiveSleepCount: 0,
       lastWakeUpTime: 0,
-      spaceStartTime: 0, // 持久化的Space启动时间
+      spaceStartTime: 0,
       lastKnownStatus: "unknown"
     };
   }
 
-  /**
-   * 格式化时间差
-   */
   formatDuration(ms) {
     if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
     
@@ -95,11 +81,7 @@ class HuggingFaceKeeper {
     return parts.join("");
   }
 
-  /**
-   * 检测Space状态（基于KV持久化）
-   */
   async checkSpaceStatus(space) {
-    // 从KV获取持久化状态
     const state = await this.getSpaceState(space.spaceName);
     const checkStartTime = Date.now();
     let retry = CONFIG.retryCount;
@@ -126,20 +108,16 @@ class HuggingFaceKeeper {
 
         let status, statusDesc, runningTime = "0秒";
         
-        // 状态变化检测与启动时间更新
         switch (spaceData.runtime?.stage) {
           case "RUNNING":
             status = "active";
             statusDesc = "正常运行中";
             
-            // 状态从非运行变为运行 → 更新启动时间
             if (state.lastKnownStatus !== "active") {
-              // 如果是首次运行或从睡眠中唤醒
               state.spaceStartTime = now;
               console.log(`[${space.spaceName}] 记录启动时间: ${new Date(state.spaceStartTime).toLocaleString()}`);
             }
             
-            // 计算运行时间（当前时间 - 持久化的启动时间）
             runningTime = this.formatDuration(now - state.spaceStartTime);
             state.consecutiveSleepCount = 0;
             break;
@@ -164,9 +142,7 @@ class HuggingFaceKeeper {
             runningTime = "状态异常";
         }
         
-        // 更新最后已知状态
         state.lastKnownStatus = status;
-        // 保存状态到KV（持久化）
         await this.saveSpaceState(space.spaceName, state);
 
         return {
@@ -186,7 +162,6 @@ class HuggingFaceKeeper {
         retry--;
         if (retry === 0) {
           const errorDuration = Date.now() - checkStartTime;
-          // 出错时也保存状态
           await this.saveSpaceState(space.spaceName, state);
           return {
             status: "error",
@@ -205,9 +180,6 @@ class HuggingFaceKeeper {
     }
   }
 
-  /**
-   * 唤醒Space
-   */
   async wakeUpSpace(space) {
     const state = await this.getSpaceState(space.spaceName);
     try {
@@ -234,7 +206,7 @@ class HuggingFaceKeeper {
 
       clearTimeout(timeoutId);
       state.lastWakeUpTime = now;
-      state.spaceStartTime = now; // 唤醒时更新启动时间
+      state.spaceStartTime = now;
       state.consecutiveSleepCount = 0;
       await this.saveSpaceState(space.spaceName, state);
 
@@ -255,9 +227,6 @@ class HuggingFaceKeeper {
     }
   }
 
-  /**
-   * 重启Space
-   */
   async restartSpace(space) {
     if (!this.hfApiToken) {
       return { success: false, message: "未配置HF_API_TOKEN" };
@@ -275,7 +244,7 @@ class HuggingFaceKeeper {
 
       if (response.ok) {
         const now = Date.now();
-        state.spaceStartTime = now; // 重启后更新启动时间
+        state.spaceStartTime = now;
       }
 
       await this.saveSpaceState(space.spaceName, state);
@@ -290,9 +259,6 @@ class HuggingFaceKeeper {
     }
   }
 
-  /**
-   * 获取所有状态
-   */
   async getAllStatus() {
     const results = await Promise.all(HF_SPACES.map(space => this.checkSpaceStatus(space)));
     HF_SPACES.forEach((space, index) => {
@@ -303,7 +269,7 @@ class HuggingFaceKeeper {
   }
 
   /**
-   * 生成前端页面
+   * 生成前端页面（新增Space URL显示）
    */
   generateHTML(statusData) {
     const lastUpdate = this.lastUpdate.toLocaleString("zh-CN");
@@ -372,10 +338,28 @@ class HuggingFaceKeeper {
         .card-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start; /* 允许URL换行 */
             margin-bottom: 20px;
+            flex-wrap: wrap; /* 小屏幕自动换行 */
+            gap: 10px;
         }
-        .space-name { font-size: 1.4em; font-weight: 700; }
+        .space-info {
+            flex: 1;
+            min-width: 250px;
+        }
+        .space-name { font-size: 1.4em; font-weight: 700; margin-bottom: 5px; }
+        .space-url {
+            font-size: 0.9em;
+            word-break: break-all; /* 长URL自动换行 */
+            margin-bottom: 5px;
+        }
+        .space-url a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        .space-url a:hover {
+            text-decoration: underline;
+        }
         .status-badge {
             display: flex;
             align-items: center;
@@ -384,6 +368,7 @@ class HuggingFaceKeeper {
             border-radius: 20px;
             font-weight: 600;
             font-size: 0.9em;
+            white-space: nowrap; /* 状态不换行 */
         }
         .status-dot {
             width: 12px;
@@ -435,6 +420,10 @@ class HuggingFaceKeeper {
         }
         @media (max-width: 768px) {
             .metrics { grid-template-columns: 1fr 1fr; }
+            .card-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
         }
     </style>
 </head>
@@ -448,7 +437,13 @@ class HuggingFaceKeeper {
         ${spaceList.map(space => `
         <div class="space-card">
             <div class="card-header">
-                <div class="space-name">${space.name} (${space.spaceName})</div>
+                <div class="space-info">
+                    <div class="space-name">${space.name} (${space.spaceName})</div>
+                    <!-- 新增：显示Space的URL并添加链接 -->
+                    <div class="space-url">
+                        <a href="${space.url}" target="_blank" rel="noopener">${space.url}</a>
+                    </div>
+                </div>
                 <div class="status-badge" style="background: ${getStatusColor(space.status)}20; color: ${getStatusColor(space.status)}">
                     <div class="status-dot" style="background: ${getStatusColor(space.status)}"></div>
                     ${space.statusDesc}
@@ -492,7 +487,6 @@ class HuggingFaceKeeper {
     </div>
 
     <script>
-        // 格式化时间差
         function formatDuration(ms) {
             if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return "0秒";
             
@@ -510,7 +504,6 @@ class HuggingFaceKeeper {
             return parts.join("");
         }
 
-        // 实时更新运行时间
         function startRealTimeUpdate() {
             setInterval(() => {
                 document.querySelectorAll('.running-time[data-status="active"]').forEach(el => {
@@ -524,10 +517,8 @@ class HuggingFaceKeeper {
 
         window.onload = startRealTimeUpdate;
 
-        // 刷新状态
         function refreshStatus() { window.location.reload(); }
 
-        // 手动唤醒
         async function wakeUpSpace(spaceName) {
             try {
                 const res = await fetch(\`/wake?space=\${spaceName}\`);
@@ -537,7 +528,6 @@ class HuggingFaceKeeper {
             } catch (e) { alert(\`操作失败: \${e.message}\`); }
         }
 
-        // 手动重启
         async function restartSpace(spaceName) {
             if (!confirm("确定重启？服务会中断10-30秒")) return;
             try {
@@ -548,7 +538,6 @@ class HuggingFaceKeeper {
             } catch (e) { alert(\`操作失败: \${e.message}\`); }
         }
 
-        // 定时全局刷新
         setInterval(refreshStatus, 5 * 60 * 1000);
     </script>
 </body>
@@ -556,9 +545,6 @@ class HuggingFaceKeeper {
   }
 }
 
-/**
- * 请求处理
- */
 async function handleRequest(request) {
   const keeper = new HuggingFaceKeeper();
   const url = new URL(request.url);
@@ -587,9 +573,6 @@ async function handleRequest(request) {
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
-/**
- * 定时任务
- */
 async function handleScheduledEvent() {
   console.log(`[定时保活] 开始执行（${new Date().toLocaleString()}）`);
   const keeper = new HuggingFaceKeeper();
@@ -614,7 +597,6 @@ async function handleScheduledEvent() {
   }
 }
 
-// 注册事件
 addEventListener("fetch", event => {
   event.respondWith(handleRequest(event.request));
 });
