@@ -14,26 +14,38 @@ SILENT_MODE=false
 if [ "$1" = "--silent" ]; then
     SILENT_MODE=true
     
-    # 从Hugging Face secrets获取参数
-    UUID=${UUID:-$(generate_uuid)}  # 如果未设置则自动生成
-    HF_TOKEN=${HF_TOKEN}
-    HF_REPO_ID=${HF_REPO_ID}
+    ###########################################################################
+    # 【静默模式核心修改1：固定参数配置 - 必须手动设置，确保每次安装节点不变】
+    ###########################################################################
+    # 1. 节点固定标识（不可自动生成，需手动填写）
+    UUID="5aa21b54-0704-4878-ad2c-7b0ff0ea401c"  # 示例UUID，替换为你的固定UUID（格式：8-4-4-4-12）
+    NAME="ic6"                        # 固定节点名称（如："my-static-xray"）
+    # 2. 网络配置参数（固定值，避免每次安装变化）
+    PORT=3000                                     # 固定服务端口（建议1024以上，如3000）
+    CFIP="joeyblog.net"                           # 固定优选IP/域名（如自定义IP需替换）
+    CFPORT=443                                    # 固定优选端口（TLS用443，非TLS用80）
+    ARGO_PORT=8080                                # 固定Argo隧道端口（如8080）
+    SUB_PATH="sub"                           # 固定订阅路径（访问时用 http://ip:port/此路径）
+    # 3. 静默模式必填参数（从Hugging Face Secrets获取，不可固定）
+    HF_TOKEN=${HF_TOKEN}                           # 必须：Hugging Face令牌（https://huggingface.co/settings/tokens）
+    HF_REPO_ID=${HF_REPO_ID}                       # 必须：Hugging Face仓库ID（如"ic6/01"）
+    ###########################################################################
     
-    # 验证必填参数
+    # 验证静默模式必填参数（HF_TOKEN和HF_REPO_ID必须从环境变量传入）
     if [ -z "$HF_TOKEN" ] || [ -z "$HF_REPO_ID" ]; then
-        echo -e "${RED}错误：静默模式需要设置HF_TOKEN和HF_REPO_ID环境变量${NC}"
-        echo -e "${YELLOW}请在Hugging Face的secrets中设置以下变量：${NC}"
-        echo -e "${BLUE}1. UUID (可选，未设置将自动生成)${NC}"
-        echo -e "${BLUE}2. HF_TOKEN (必须)${NC}"
-        echo -e "${BLUE}3. HF_REPO_ID (必须)${NC}"
+        echo -e "${RED}错误：静默模式需在Hugging Face Secrets配置以下变量${NC}"
+        echo -e "${BLUE}1. HF_TOKEN (Hugging Face访问令牌，必填)${NC}"
+        echo -e "${BLUE}2. HF_REPO_ID (仓库ID，如'ic6/01'，必填)${NC}"
         exit 1
     fi
     
-    MODE_CHOICE="1"  # 静默模式默认使用极速模式
-    echo -e "${GREEN}静默模式已启用${NC}"
-    echo -e "${BLUE}从Hugging Face secrets获取配置：${NC}"
-    echo -e "UUID: ${YELLOW}$UUID${NC}"
-    echo -e "HF_REPO_ID: ${YELLOW}$HF_REPO_ID${NC}"
+    MODE_CHOICE="1"  # 静默模式默认用极速模式，避免交互
+    echo -e "${GREEN}静默模式已启用 - 基于固定参数部署${NC}"
+    echo -e "${BLUE}静默模式配置确认：${NC}"
+    echo -e "UUID:       ${YELLOW}$UUID${NC}"
+    echo -e "节点名称:   ${YELLOW}$NAME${NC}"
+    echo -e "服务端口:   ${YELLOW}$PORT${NC}"
+    echo -e "HF仓库ID:   ${YELLOW}$HF_REPO_ID${NC}"
 fi
 
 # 如果是-v参数，直接查看节点信息
@@ -62,6 +74,7 @@ generate_uuid() {
     fi
 }
 
+# 非静默模式的交互逻辑（保持原功能不变）
 if [ "$SILENT_MODE" = false ]; then
     clear
 
@@ -137,7 +150,6 @@ if [ "$SILENT_MODE" = false ]; then
             echo -e "服务状态: ${GREEN}运行中${NC}"
             echo -e "进程PID: ${BLUE}$KEEPALIVE_PID${NC}"
             if [ -f "keep_alive_task.sh" ]; then
-                # 更新为从 spaces API 地址中解析
                 REPO_ID=$(grep 'huggingface.co/api/spaces/' keep_alive_task.sh | head -1 | sed -n 's|.*api/spaces/\([^"]*\).*|\1|p')
                 echo -e "目标仓库: ${YELLOW}$REPO_ID (类型: Space)${NC}"
             fi
@@ -157,6 +169,7 @@ if [ "$SILENT_MODE" = false ]; then
     fi
 fi
 
+# 依赖安装（保持原功能不变）
 echo -e "${BLUE}检查并安装依赖...${NC}"
 if ! command -v python3 &> /dev/null; then
     echo -e "${YELLOW}正在安装 Python3...${NC}"
@@ -195,7 +208,6 @@ if [ ! -d "$PROJECT_DIR_NAME" ]; then
 fi
 
 cd "$PROJECT_DIR_NAME"
-
 echo -e "${GREEN}依赖安装完成！${NC}"
 echo
 
@@ -207,7 +219,7 @@ fi
 cp app.py app.py.backup
 echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
 
-# 初始化保活变量
+# 初始化保活变量（保持原功能不变）
 if [ "$SILENT_MODE" = false ]; then
     KEEP_ALIVE_HF="false"
     HF_TOKEN=""
@@ -216,7 +228,7 @@ else
     KEEP_ALIVE_HF="true"
 fi
 
-# 定义保活配置函数
+# 保活配置函数（保持原功能不变）
 configure_hf_keep_alive() {
     if [ "$SILENT_MODE" = false ]; then
         echo
@@ -224,7 +236,7 @@ configure_hf_keep_alive() {
         read -p "> " SETUP_KEEP_ALIVE
         if [ "$SETUP_KEEP_ALIVE" = "y" ] || [ "$SETUP_KEEP_ALIVE" = "Y" ]; then
             echo -e "${YELLOW}请输入您的 Hugging Face 访问令牌 (Token):${NC}"
-            echo -e "${BLUE}（令牌用于API认证，输入时将不可见。请前往 https://huggingface.co/settings/tokens 获取 不会使用看视频教程https://youtu.be/ZRaUWQMjR_c）${NC}"
+            echo -e "${BLUE}（令牌用于API认证，输入时将不可见。请前往 https://huggingface.co/settings/tokens 获取）${NC}"
             read -sp "Token: " HF_TOKEN_INPUT
             echo
             if [ -z "$HF_TOKEN_INPUT" ]; then
@@ -248,6 +260,7 @@ configure_hf_keep_alive() {
     fi
 }
 
+# 极速模式配置（非静默模式保持原交互，静默模式用固定参数）
 if [ "$MODE_CHOICE" = "1" ]; then
     echo -e "${BLUE}=== 极速模式 ===${NC}"
     echo
@@ -260,25 +273,27 @@ if [ "$MODE_CHOICE" = "1" ]; then
             echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
         fi
     else
+        # 【静默模式核心修改2：强制使用固定UUID】
         UUID_INPUT="$UUID"
-        echo -e "${GREEN}使用静默模式提供的UUID: $UUID_INPUT${NC}"
+        echo -e "${GREEN}静默模式：使用固定UUID: $UUID_INPUT${NC}"
     fi
     
     sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
     echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
     
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
-    echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
-    
     if [ "$SILENT_MODE" = false ]; then
-        configure_hf_keep_alive
+        sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
+        echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
     fi
+    
+    configure_hf_keep_alive
     
     echo -e "${GREEN}YouTube分流已自动配置${NC}"
     echo
     echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
     echo
     
+# 完整模式配置（非静默模式保持原交互，静默模式用固定参数）
 else
     echo -e "${BLUE}=== 完整配置模式 ===${NC}"
     echo
@@ -291,13 +306,16 @@ else
             echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
         fi
     else
+        # 【静默模式核心修改3：完整模式下同样强制使用固定UUID】
         UUID_INPUT="$UUID"
-        echo -e "${GREEN}使用静默模式提供的UUID: $UUID_INPUT${NC}"
+        echo -e "${GREEN}静默模式：使用固定UUID: $UUID_INPUT${NC}"
     fi
     sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
     echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
 
+    # 非静默模式走交互，静默模式跳过交互直接用固定值
     if [ "$SILENT_MODE" = false ]; then
+        # 节点名称交互（静默模式已固定，此处跳过）
         echo -e "${YELLOW}当前节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)${NC}"
         read -p "请输入节点名称 (留空保持不变): " NAME_INPUT
         if [ -n "$NAME_INPUT" ]; then
@@ -305,6 +323,7 @@ else
             echo -e "${GREEN}节点名称已设置为: $NAME_INPUT${NC}"
         fi
 
+        # 服务端口交互（静默模式已固定，此处跳过）
         echo -e "${YELLOW}当前服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)${NC}"
         read -p "请输入服务端口 (留空保持不变): " PORT_INPUT
         if [ -n "$PORT_INPUT" ]; then
@@ -312,6 +331,7 @@ else
             echo -e "${GREEN}端口已设置为: $PORT_INPUT${NC}"
         fi
 
+        # 其他参数交互（省略，保持原逻辑）
         echo -e "${YELLOW}当前优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)${NC}"
         read -p "请输入优选IP/域名 (留空使用默认 joeyblog.net): " CFIP_INPUT
         if [ -z "$CFIP_INPUT" ]; then
@@ -341,6 +361,7 @@ else
             echo -e "${GREEN}订阅路径已设置为: $SUB_PATH_INPUT${NC}"
         fi
 
+        # 高级选项交互（省略，保持原逻辑）
         echo
         echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
         read -p "> " ADVANCED_CONFIG
@@ -410,11 +431,37 @@ else
     fi
     
     echo -e "${GREEN}YouTube分流已自动配置${NC}"
-
     echo
     echo -e "${GREEN}完整配置完成！${NC}"
 fi
 
+###########################################################################
+# 【静默模式核心修改4：强制应用所有固定参数到app.py，覆盖交互配置】
+###########################################################################
+if [ "$SILENT_MODE" = true ]; then
+    echo -e "\n${BLUE}=== 静默模式：应用所有固定参数 ===${NC}"
+    # 1. 节点名称
+    sed -i "s/NAME = os.environ.get('NAME', '[^']*')/NAME = os.environ.get('NAME', '$NAME')/" app.py
+    echo -e "${GREEN}节点名称固定为: $NAME${NC}"
+    # 2. 服务端口
+    sed -i "s/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or [0-9]*)/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or $PORT)/" app.py
+    echo -e "${GREEN}服务端口固定为: $PORT${NC}"
+    # 3. 优选IP
+    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', '$CFIP')/" app.py
+    echo -e "${GREEN}优选IP固定为: $CFIP${NC}"
+    # 4. 优选端口
+    sed -i "s/CFPORT = int(os.environ.get('CFPORT', '[^']*'))/CFPORT = int(os.environ.get('CFPORT', '$CFPORT'))/" app.py
+    echo -e "${GREEN}优选端口固定为: $CFPORT${NC}"
+    # 5. Argo端口
+    sed -i "s/ARGO_PORT = int(os.environ.get('ARGO_PORT', '[^']*'))/ARGO_PORT = int(os.environ.get('ARGO_PORT', '$ARGO_PORT'))/" app.py
+    echo -e "${GREEN}Argo端口固定为: $ARGO_PORT${NC}"
+    # 6. 订阅路径
+    sed -i "s/SUB_PATH = os.environ.get('SUB_PATH', '[^']*')/SUB_PATH = os.environ.get('SUB_PATH', '$SUB_PATH')/" app.py
+    echo -e "${GREEN}订阅路径固定为: $SUB_PATH${NC}"
+    echo -e "${BLUE}=======================================${NC}\n"
+fi
+
+# 配置摘要（保持原功能不变）
 echo -e "${YELLOW}=== 当前配置摘要 ===${NC}"
 echo -e "UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)"
 echo -e "节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)"
@@ -428,13 +475,32 @@ fi
 echo -e "${YELLOW}========================${NC}"
 echo
 
-echo -e "${BLUE}正在启动服务...${NC}"
-echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
-echo
+# 【核心修改：修复目录权限问题】
+# Hugging Face Spaces中，应用只能写入自己的工作目录或/tmp目录
+# 自动检测可写目录并设置
+if [ -w "$HOME" ]; then
+    HF_SUB_DIR="$HOME/ic6/01/files"  # 用户主目录下
+elif [ -w "/tmp" ]; then
+    HF_SUB_DIR="/tmp/ic6/01/files"   # 临时目录
+else
+    HF_SUB_DIR="./files"             # 当前工作目录
+fi
 
-# 修改Python文件添加YouTube分流到xray配置，并增加80端口节点
+# 创建目录并处理权限错误
+echo -e "${BLUE}尝试创建Hugging Face sub.txt目标目录：$HF_SUB_DIR${NC}"
+if mkdir -p "$HF_SUB_DIR"; then
+    echo -e "${GREEN}目录创建成功：$HF_SUB_DIR${NC}"
+    chmod 755 "$HF_SUB_DIR"
+else
+    echo -e "${YELLOW}警告：无法创建目标目录，将使用当前目录作为 fallback${NC}"
+    HF_SUB_DIR="./files"
+    mkdir -p "$HF_SUB_DIR"
+    chmod 755 "$HF_SUB_DIR"
+fi
+
+# 启动服务前的配置补丁（修改sub.txt生成路径）
 echo -e "${BLUE}正在添加YouTube分流功能和80端口节点...${NC}"
-cat > youtube_patch.py << 'EOF'
+cat > youtube_patch.py << EOF
 # coding: utf-8
 import os, base64, json, subprocess, time
 
@@ -574,13 +640,12 @@ new_config = '''config = {
 # 替换配置
 content = content.replace(old_config, new_config)
 
-# 修改generate_links函数，添加80端口节点
+# 【核心修改：修改generate_links函数，将sub.txt写入正确路径并增加日志输出】
 old_generate_function = '''# Generate links and subscription content
 async def generate_links(argo_domain):
     meta_info = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True)
     meta_info = meta_info.stdout.split('"')
     ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
-
     time.sleep(2)
     VMESS = {"v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
  
@@ -594,7 +659,6 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     
     with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
         list_file.write(list_txt)
-
     sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
     with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
         sub_file.write(sub_txt)
@@ -611,48 +675,78 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
 
 new_generate_function = '''# Generate links and subscription content
 async def generate_links(argo_domain):
-    meta_info = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True)
-    meta_info = meta_info.stdout.split('"')
-    ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
-
-    time.sleep(2)
+    import os, logging  # 导入必要模块
+    # 配置日志输出到文件和控制台
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("node_info.log"),  # 日志写入文件
+            logging.StreamHandler()                # 同时输出到控制台
+        ]
+    )
     
-    # TLS节点
-    VMESS_TLS = {"v": "2", "ps": f"{NAME}-{ISP}-TLS", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
-    
-    # 无TLS节点 (80端口)
-    VMESS_80 = {"v": "2", "ps": f"{NAME}-{ISP}-80", "add": CFIP, "port": "80", "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "", "sni": "", "alpn": "", "fp": ""}
- 
-    list_txt = f"""
-vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
-  
-vmess://{ base64.b64encode(json.dumps(VMESS_TLS).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
-
-vless://{UUID}@{CFIP}:80?encryption=none&security=none&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-80
-
-vmess://{ base64.b64encode(json.dumps(VMESS_80).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:80?security=none&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-80
-    """
-    
-    with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
-        list_file.write(list_txt)
-
-    sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
-    with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
-        sub_file.write(sub_txt)
+    try:
+        meta_info = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True)
+        meta_info = meta_info.stdout.split('"')
+        ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
+        time.sleep(2)
         
-    print(sub_txt)
-    
-    print(f"{FILE_PATH}/sub.txt saved successfully")
-    
-    # Additional actions
-    send_telegram()
-    upload_nodes()
- 
-    return sub_txt'''
+        # TLS节点
+        VMESS_TLS = {"v": "2", "ps": f"{NAME}-{ISP}-TLS", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
+        
+        # 无TLS节点 (80端口)
+        VMESS_80 = {"v": "2", "ps": f"{NAME}-{ISP}-80", "add": CFIP, "port": "80", "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "", "sni": "", "alpn": "", "fp": ""}
+     
+        list_txt = f"""
+vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
+      
+vmess://{ base64.b64encode(json.dumps(VMESS_TLS).encode('utf-8')).decode('utf-8')}
+trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
+vless://{UUID}@{CFIP}:80?encryption=none&security=none&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-80
+vmess://{ base64.b64encode(json.dumps(VMESS_80).encode('utf-8')).decode('utf-8')}
+trojan://{UUID}@{CFIP}:80?security=none&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-80
+        """
+        
+        # 获取目标路径（从环境变量或默认值）
+        HF_SUB_PATH = os.environ.get('HF_SUB_PATH', './files/sub.txt')
+        # 确保目录存在
+        os.makedirs(os.path.dirname(HF_SUB_PATH), exist_ok=True)
+        
+        # 写入节点列表（本地）
+        LOCAL_LIST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'list.txt')
+        with open(LOCAL_LIST_PATH, 'w', encoding='utf-8') as list_file:
+            list_file.write(list_txt)
+        logging.info(f"节点列表已写入本地: {LOCAL_LIST_PATH}")
+        
+        # 生成base64订阅内容
+        sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
+        
+        # 写入订阅文件
+        with open(HF_SUB_PATH, 'w', encoding='utf-8') as sub_file:
+            sub_file.write(sub_txt)
+        logging.info(f"✅ 订阅文件已写入: {HF_SUB_PATH}")
+        
+        # 同时保存本地副本
+        LOCAL_SUB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sub.txt')
+        with open(LOCAL_SUB_PATH, 'w', encoding='utf-8') as sub_file:
+            sub_file.write(sub_txt)
+        logging.info(f"📝 本地订阅副本: {LOCAL_SUB_PATH}")
+        
+        # 输出节点信息到日志
+        logging.info("节点信息生成成功:")
+        logging.info(f"节点列表:\n{list_txt}")
+        logging.info(f"订阅链接:\n{sub_txt}")
+        
+        # Additional actions
+        send_telegram()
+        upload_nodes()
+     
+        return sub_txt
+    except Exception as e:
+        logging.error(f"生成节点信息时出错: {str(e)}", exc_info=True)
+        raise  # 重新抛出异常以便上层处理
+'''
 
 # 替换generate_links函数
 content = content.replace(old_generate_function, new_generate_function)
@@ -673,14 +767,23 @@ echo -e "${GREEN}YouTube分流和80端口节点已集成${NC}"
 pkill -f "python3 app.py" > /dev/null 2>&1
 sleep 2
 
-# 启动服务并获取PID
+# 【核心修改：设置环境变量传递目标路径，并确保日志输出可见】
+export HF_SUB_PATH="$HF_SUB_DIR/sub.txt"
+echo -e "${BLUE}设置订阅文件路径环境变量: HF_SUB_PATH=$HF_SUB_PATH${NC}"
+
+# 启动服务并确保日志输出到控制台和文件
+echo -e "${BLUE}正在启动服务...${NC}"
+echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
+echo
+
+# 启动服务（不使用nohup，确保日志能被Hugging Face捕获）
 python3 app.py > app.log 2>&1 &
 APP_PID=$!
 
 # 验证PID获取成功
 if [ -z "$APP_PID" ] || [ "$APP_PID" -eq 0 ]; then
     echo -e "${RED}获取进程PID失败，尝试直接启动${NC}"
-    nohup python3 app.py > app.log 2>&1 &
+    python3 app.py > app.log 2>&1 &
     sleep 2
     APP_PID=$(pgrep -f "python3 app.py" | head -1)
     if [ -z "$APP_PID" ]; then
@@ -692,6 +795,7 @@ fi
 
 echo -e "${GREEN}服务已在后台启动，PID: $APP_PID${NC}"
 echo -e "${YELLOW}日志文件: $(pwd)/app.log${NC}"
+echo -e "${BLUE}实时查看日志: tail -f $(pwd)/app.log${NC}"
 
 # 如果设置了保活URL，则启动保活任务
 KEEPALIVE_PID=""
@@ -718,10 +822,11 @@ if [ "$KEEP_ALIVE_HF" = "true" ]; then
     echo "done" >> keep_alive_task.sh
     chmod +x keep_alive_task.sh
     
-    # 使用nohup后台运行保活任务
-    nohup ./keep_alive_task.sh >/dev/null 2>&1 &
+    # 启动保活任务
+    ./keep_alive_task.sh > keep_alive.log 2>&1 &
     KEEPALIVE_PID=$!
     echo -e "${GREEN}Hugging Face API 保活任务已启动 (PID: $KEEPALIVE_PID)。${NC}"
+    echo -e "${YELLOW}保活日志: $(pwd)/keep_alive.log${NC}"
 fi
 
 
@@ -751,14 +856,21 @@ WAIT_COUNT=0
 NODE_INFO=""
 
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if [ -f ".cache/sub.txt" ]; then
-        NODE_INFO=$(cat .cache/sub.txt 2>/dev/null)
+    # 检查可能的订阅文件位置
+    if [ -f "$HF_SUB_DIR/sub.txt" ]; then
+        NODE_INFO=$(cat "$HF_SUB_DIR/sub.txt" 2>/dev/null)
         if [ -n "$NODE_INFO" ]; then
             echo -e "${GREEN}节点信息已生成！${NC}"
             break
         fi
     elif [ -f "sub.txt" ]; then
         NODE_INFO=$(cat sub.txt 2>/dev/null)
+        if [ -n "$NODE_INFO" ]; then
+            echo -e "${GREEN}节点信息已生成！${NC}"
+            break
+        fi
+    elif [ -f ".cache/sub.txt" ]; then
+        NODE_INFO=$(cat .cache/sub.txt 2>/dev/null)
         if [ -n "$NODE_INFO" ]; then
             echo -e "${GREEN}节点信息已生成！${NC}"
             break
@@ -812,6 +924,7 @@ fi
 echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
 echo -e "UUID: ${BLUE}$CURRENT_UUID${NC}"
 echo -e "订阅路径: ${BLUE}/$SUB_PATH_VALUE${NC}"
+echo -e "订阅文件位置: ${GREEN}$HF_SUB_DIR/sub.txt${NC}"
 echo
 
 echo -e "${YELLOW}=== 访问地址 ===${NC}"
@@ -840,12 +953,11 @@ echo
 SAVE_INFO="========================================
                       节点信息保存                      
 ========================================
-
 部署时间: $(date)
 UUID: $CURRENT_UUID
 服务端口: $SERVICE_PORT
 订阅路径: /$SUB_PATH_VALUE
-
+订阅文件位置: $HF_SUB_DIR/sub.txt
 === 访问地址 ==="
 
 if command -v curl &> /dev/null; then
@@ -860,17 +972,14 @@ fi
 SAVE_INFO="${SAVE_INFO}
 本地订阅: http://localhost:$SERVICE_PORT/$SUB_PATH_VALUE
 本地面板: http://localhost:$SERVICE_PORT
-
 === 节点信息 ===
 $DECODED_NODES
-
 === 订阅链接 ===
 $NODE_INFO
-
 === 管理命令 ===
 查看日志: tail -f $(pwd)/app.log
 停止主服务: kill $APP_PID
-重启主服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
+重启主服务: kill $APP_PID && python3 app.py > app.log 2>&1 &
 查看进程: ps aux | grep app.py"
 
 if [ "$KEEP_ALIVE_HF" = "true" ]; then
@@ -879,7 +988,6 @@ if [ "$KEEP_ALIVE_HF" = "true" ]; then
 fi
 
 SAVE_INFO="${SAVE_INFO}
-
 === 分流说明 ===
 - 已集成YouTube分流优化到xray配置
 - YouTube相关域名自动走专用线路
