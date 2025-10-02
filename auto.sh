@@ -25,6 +25,10 @@ if [ "$1" = "--silent" ]; then
     CFIP="joeyblog.net"                           # 固定优选IP/域名（如自定义IP需替换）
     CFPORT=443                                    # 固定优选端口（TLS用443，非TLS用80）
     ARGO_PORT=8080                                # 固定Argo隧道端口（如8080）
+        # 4. Argo固定隧道参数（从环境变量获取，关键新增）
+    ARGO_TUNNEL_ID=${ARGO_TUNNEL_ID}                 # 从start_server.sh传递的环境变量获取
+    ARGO_TUNNEL_TOKEN=${ARGO_TUNNEL_TOKEN}           # 从start_server.sh传递的环境变量获取
+    ARGO_FIXED_DOMAIN=${ARGO_FIXED_DOMAIN}           # 从start_server.sh传递的环境变量获取
     SUB_PATH="sub"                           # 固定订阅路径（访问时用 http://ip:port/此路径）
     # 3. 静默模式必填参数（从Hugging Face Secrets获取，不可固定）
     HF_TOKEN=${HF_TOKEN}                           # 必须：Hugging Face令牌（https://huggingface.co/settings/tokens）
@@ -458,6 +462,15 @@ if [ "$SILENT_MODE" = true ]; then
     # 6. 订阅路径
     sed -i "s/SUB_PATH = os.environ.get('SUB_PATH', '[^']*')/SUB_PATH = os.environ.get('SUB_PATH', '$SUB_PATH')/" app.py
     echo -e "${GREEN}订阅路径固定为: $SUB_PATH${NC}"
+        # 7. Argo固定隧道ID（关键新增）
+    sed -i "s/ARGO_TUNNEL_ID = os.environ.get('ARGO_TUNNEL_ID', '[^']*')/ARGO_TUNNEL_ID = os.environ.get('ARGO_TUNNEL_ID', '$ARGO_TUNNEL_ID')/" app.py
+    echo -e "${GREEN}Argo隧道ID固定为: $ARGO_TUNNEL_ID${NC}"
+    # 8. Argo固定隧道Token（关键新增）
+    sed -i "s/ARGO_TUNNEL_TOKEN = os.environ.get('ARGO_TUNNEL_TOKEN', '[^']*')/ARGO_TUNNEL_TOKEN = os.environ.get('ARGO_TUNNEL_TOKEN', '$ARGO_TUNNEL_TOKEN')/" app.py
+    echo -e "${GREEN}Argo隧道Token固定为: ******（已隐藏敏感信息）${NC}"
+    # 9. Argo固定域名（关键新增）
+    sed -i "s/ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')/ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_FIXED_DOMAIN')/" app.py
+    echo -e "${GREEN}Argo固定域名为: $ARGO_FIXED_DOMAIN${NC}"
     echo -e "${BLUE}=======================================${NC}\n"
 fi
 
